@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>聲吶魚探儀模擬器</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            color: white;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            touch-action: none; /* 防止手機瀏覽器滑動重新整理 */
+        }
+
+        #sonarCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* 讓底層 canvas 可以接收到滑鼠事件 */
+        }
+
+        .depth-display {
+            position: absolute;
+            top: 10px;
+            left: 20px;
+            font-size: 80px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px #000;
+            letter-spacing: -2px;
+        }
+
+        .temp-display {
+            position: absolute;
+            top: 100px;
+            left: 25px;
+            font-size: 30px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px #000;
+        }
+
+        .freq-display {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 24px;
+            font-weight: bold;
+            color: yellow;
+            text-shadow: 2px 2px 4px #000;
+            background: rgba(0,0,0,0.5);
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+
+        .scale {
+            position: absolute;
+            right: 10px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            height: 90%;
+            top: 5%;
+            font-size: 20px;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px #000;
+        }
+
+        /* 新增的手機端控制按鈕樣式 */
+        .mobile-controls {
+            position: absolute;
+            bottom: 30px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            pointer-events: auto; /* 覆寫 ui-layer 的設定，讓按鈕可以被點擊 */
+        }
+
+        .control-btn {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 15px 25px;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 12px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            transition: background 0.2s, transform 0.1s;
+            user-select: none;
+        }
+
+            .control-btn:active {
+                background: rgba(255, 255, 255, 0.3);
+                transform: scale(0.95);
+            }
+    </style>
+</head>
+<body oncontextmenu="return false;">
+
+    <canvas id="sonarCanvas"></canvas>
+
+    <div id="ui-layer">
+        <div class="depth-display">11.0<span style="font-size: 50px;">m</span></div>
+        <div class="temp-display" id="tempText">21.96 <span style="font-size: 20px;">°C</span></div>
+        <div class="freq-display" id="freqText">CH1: 200 kHz (高頻)</div>
+
+        <div class="scale">
+            <span>0</span>
+            <span>2</span>
+            <span>4</span>
+            <span>6</span>
+            <span>8</span>
+            <span>10</span>
+        </div>
+
+        <div class="mobile-controls">
+            <button class="control-btn" id="btnWeak">弱魚訊</button>
+            <button class="control-btn" id="btnStrong">強魚訊</button>
+            <button class="control-btn" id="btnFreq">切換頻率</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('sonarCanvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        const freqText = document.getElementById('freqText');
+        const tempText = document.getElementById('tempText');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            ctx.fillStyle = '#000088';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        let currentFreq = 'high';
+        let activeFishes = [];
+        let timeOffset = 0;
+        let baseTemp = 21.96;
+
+        // 獨立出切換頻率的邏輯
+        function toggleFrequency() {
+            currentFreq = (currentFreq === 'high') ? 'low' : 'high';
+            freqText.innerText = currentFreq === 'high' ? 'CH1: 200 kHz (高頻)' : 'CH2: 50 kHz (低頻)';
+        }
+
+        // 保留原有的鍵盤與滑鼠支援 (可選，方便在電腦上測試)
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                toggleFrequency();
+            }
+        });
+
+        // 綁定新按鈕的事件 (使用 pointerdown 支援滑鼠與觸控，反應更即時)
+        document.getElementById('btnFreq').addEventListener('pointerdown', (e) => {
+            e.stopPropagation(); // 防止點擊按鈕時觸發底層 canvas 的事件
+            toggleFrequency();
+        });
+
+        document.getElementById('btnStrong').addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
+            spawnFish(true);
+        });
+
+        document.getElementById('btnWeak').addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
+            spawnFish(false);
+        });
+
+        function spawnFish(isStrong) {
+            const depthY = Math.random() * (canvas.height * 0.6) + (canvas.height * 0.15);
+            const sizeMultiplier = 0.6 + Math.random() * 0.8;
+
+            const baseWidth = currentFreq === 'high' ? 80 : 160;
+            const baseArchHeight = currentFreq === 'high' ? 20 : 45;
+
+            // 調整：稍微拉高強訊號的基礎強度，確保更容易生成紅色核心
+            const maxSignalIntensity = isStrong ? (0.7 + Math.random() * 0.4) : (0.2 + Math.random() * 0.15);
+
+            activeFishes.push({
+                y: depthY,
+                w: baseWidth * sizeMultiplier,
+                h: baseArchHeight * sizeMultiplier,
+                thickness: (4 + Math.random() * 4) * sizeMultiplier,
+                maxIntensity: maxSignalIntensity,
+                age: 0,
+                strong: isStrong
+            });
+        }
+
+        function getSignalColor(intensity) {
+            if (intensity < 0.15) return 'rgba(0, 68, 204, 0.5)';
+            if (intensity < 0.3) return '#00FFFF';  // 青色
+            if (intensity < 0.5) return '#ADFF2F';  // 黃綠色
+            // 調整：降低紅色出現的門檻，讓漸層更容易過渡到紅色
+            if (intensity < 0.65) return '#FFFF00'; // 黃色 (原本是 0.8)
+            return '#FF0000';                       // 紅色
+        }
+
+        function animate() {
+            const scrollSpeed = 2;
+            const rightEdge = canvas.width - scrollSpeed;
+
+            ctx.drawImage(canvas, scrollSpeed, 0, canvas.width - scrollSpeed, canvas.height,
+                0, 0, canvas.width - scrollSpeed, canvas.height);
+            ctx.fillStyle = '#000088';
+            ctx.fillRect(rightEdge, 0, scrollSpeed, canvas.height);
+
+            if (Math.random() < 0.05) {
+                let tempJitter = (Math.random() * 0.08 - 0.04);
+                let displayTemp = (baseTemp + tempJitter).toFixed(2);
+                tempText.innerHTML = `${displayTemp} <span style="font-size: 20px;">°C</span>`;
+            }
+
+            for (let i = 0; i < scrollSpeed; i++) {
+                const drawX = rightEdge + i;
+                const noiseCount = Math.floor(Math.random() * 40) + 20;
+                for (let n = 0; n < noiseCount; n++) {
+                    const noiseY = Math.random() * canvas.height;
+                    ctx.fillStyle = Math.random() > 0.8 ? 'rgba(0, 255, 255, 0.4)' : 'rgba(0, 0, 180, 0.6)';
+                    ctx.fillRect(drawX, noiseY, 1, Math.random() > 0.5 ? 1 : 2);
+                }
+            }
+
+            for (let i = 0; i < scrollSpeed; i++) {
+                const drawX = rightEdge + i;
+
+                ctx.fillStyle = '#660000';
+                ctx.fillRect(drawX, 0, 1, 6);
+                ctx.fillStyle = '#FFFF00';
+                ctx.fillRect(drawX, 6, 1, 2);
+
+                const noiseDepth = 8 + Math.random() * 20;
+                for (let ny = 8; ny < noiseDepth; ny++) {
+                    if (Math.random() > (ny - 8) / 20) {
+                        ctx.fillStyle = Math.random() > 0.4 ? '#FFFF00' : '#00FFFF';
+                        ctx.fillRect(drawX, ny, 1, 1);
+                    }
+                }
+            }
+
+            timeOffset += 0.015;
+            const baseSeabedY = canvas.height * 0.88 + Math.sin(timeOffset) * 6 + Math.sin(timeOffset * 0.4) * 4;
+
+            for (let i = 0; i < scrollSpeed; i++) {
+                const drawX = rightEdge + i;
+                const noiseY = (Math.random() * 4 - 2);
+                const currentSeabedY = baseSeabedY + noiseY;
+
+                ctx.fillStyle = Math.random() > 0.3 ? '#FFFF00' : '#00FFFF';
+                ctx.fillRect(drawX, currentSeabedY, 1, 3 + Math.random() * 2);
+                ctx.fillStyle = '#FF0000';
+                ctx.fillRect(drawX, currentSeabedY + 3, 1, 2 + Math.random() * 2);
+
+                ctx.fillStyle = '#660000';
+                ctx.fillRect(drawX, currentSeabedY + 5, 1, canvas.height - currentSeabedY);
+            }
+
+            for (let i = activeFishes.length - 1; i >= 0; i--) {
+                let fish = activeFishes[i];
+                fish.age += scrollSpeed;
+
+                if (fish.age > fish.w) {
+                    activeFishes.splice(i, 1);
+                    continue;
+                }
+
+                let normalizedX = (fish.age / (fish.w / 2)) - 1;
+                let dy = fish.h * (normalizedX * normalizedX);
+                let pixelY = fish.y + 2 * dy;
+
+                for (let x = 0; x < scrollSpeed; x++) {
+                    const drawX = rightEdge + x;
+
+                    let horizontalIntensity = (1 - Math.abs(normalizedX)) * fish.maxIntensity;
+                    horizontalIntensity *= (0.8 + Math.random() * 0.4);
+
+                    const halfThick = fish.thickness / 2;
+                    for (let ty = -halfThick; ty <= halfThick; ty++) {
+                        let verticalFalloff = 1 - (Math.abs(ty) / halfThick);
+                        let finalIntensity = horizontalIntensity * verticalFalloff;
+
+                        if (finalIntensity > 0.05) {
+                            ctx.fillStyle = getSignalColor(finalIntensity);
+                            ctx.fillRect(drawX, pixelY + ty + (Math.random() * 2 - 1), 1, 1);
+                        }
+                    }
+                }
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
